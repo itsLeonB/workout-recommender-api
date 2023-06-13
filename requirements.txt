@@ -1,8 +1,6 @@
 fastapi
-pydantic
 uvicorn[standard]
-python-multipart
-numpy==1.21
-Pillow
 pandas
+numpy==1.21.2
 scikit-learn
+python-multipart

@@ -1,52 +1,54 @@
 import os
+import logging
 import uvicorn
-import traceback
 import pandas as pd
 import numpy as np
 import pickle
 
-from pydantic import BaseModel
-# from urllib.request import Request
-from fastapi import FastAPI, Response
+from typing import List
+from fastapi import FastAPI, Path
 from sklearn.metrics.pairwise import cosine_similarity
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
-# This endpoint is for a test (or health check) to this server
-@app.get("/")
-def index():
-    return "Hello world from ML endpoint!"
-
-class RequestId(BaseModel):
-    idx:int
-
-@app.post("/load_encodings")
-def load_encodings():
-    file_path = "encodings.pickle"
-    with open(file_path, "rb") as pkl:
-        encodings = pd.DataFrame(pickle.load(pkl))
-    encodings_matrix = np.vstack(encodings["encodings"].to_numpy())    
+def load_encodings(file_path: str):
+    # Function to load the encodings from a pickle file
+    with open(file_path, 'rb') as pkl:
+        encodings = pickle.load(pkl)
+    encodings_matrix = np.vstack(encodings['encodings'].to_numpy())
     return encodings, encodings_matrix
 
-@app.post("/get_recommendations")
-def get_recommendations(req: RequestId, response: Response, encodings, encodings_matrix):
-    try:
-        workout_index = req.idx
-        workout_encoding = np.reshape(encodings.iloc[workout_index]['encodings'], (1, -1))
-        sim_scores = cosine_similarity(workout_encoding, encodings_matrix)[0]
-        sim_scores = pd.DataFrame(sim_scores, columns=['similarity_score'])
-        sim_scores = sim_scores.sort_values(by='similarity_score', ascending=False)
-        sim_scores = sim_scores.drop(workout_index)
-        top3 = sim_scores.head(3)
-        return top3.index
-    
-    except Exception as e:
-        traceback.print_exc()
-        response.status_code = 500
-        return "Internal Server Error"
+def get_recommendations(workout_index: int, encodings, encodings_matrix) -> List[int]:
+    # Function to get recommendations based on workout index and encodings
+    workout_encoding = np.reshape(encodings.iloc[workout_index]['encodings'], (1, -1))
+    sim_scores = cosine_similarity(workout_encoding, encodings_matrix)[0]
+    sim_scores = pd.DataFrame(sim_scores, columns=['similarity_score'])
+    sim_scores = sim_scores.sort_values(by='similarity_score', ascending=False)
+    sim_scores = sim_scores.drop(workout_index)
+    top_recommendations = sim_scores.head(3)
+    return top_recommendations.index.tolist()
 
-# Starting the server
-# Your can check the API documentation easily using /docs after the server is running
-port = os.environ.get("PORT", 8080)
-print(f"Listening to http://0.0.0.0:{port}")
-uvicorn.run(app, host='0.0.0.0',port=port)
+encodings, encodings_matrix = load_encodings('encodings.pickle')
+
+@app.get("/")
+def index():
+    # Test or health check endpoint
+    return "Hello world from ML endpoint!"
+
+@app.get("/recommendations/{workout_index}")
+def get_recommendations_endpoint(workout_index: int = Path(..., ge=0, lt=len(encodings))):
+    try:
+        recommendations = get_recommendations(workout_index, encodings, encodings_matrix)
+        return {
+            "recommendations": recommendations
+        }
+    except Exception as e:
+        logger.exception("Error occurred while getting recommendations")
+        raise
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    port = os.environ.get("PORT", 8080)
+    logger.info(f"Listening to http://0.0.0.0:{port}")
+    uvicorn.run(app, host='0.0.0.0', port=port)
